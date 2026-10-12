@@ -1,6 +1,8 @@
 {
   "meta": {
     "examCode": "CLF-C02",
+    "examName": "Cloud Practitioner",
+    "level": "Foundational",
     "examSize": 32,
     "passMark": 0.7,
     "officialQuestions": 65,

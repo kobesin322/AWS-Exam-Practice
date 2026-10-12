@@ -1,4 +1,7 @@
-"""Terminal CLF-C02 exam. One question at a time, same mix and wrong pool as the dashboard.
+"""Terminal practice exam. One question at a time, same mix and wrong pool as the dashboard.
+
+Choose CLF-C02 or MLA-C01 at startup. Each exam keeps its own questions and wrong pool.
+Machine Learning Specialty is not included.
 
 Launch from the repo root with clf02-exam.bat, or run:
     python scripts/exam_terminal.py
@@ -23,9 +26,33 @@ def resource_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def default_data_dir() -> Path:
-    base = os.environ.get("LOCALAPPDATA") or str(Path.home())
-    return Path(base) / "clf02-practice"
+def exam_storage_id(meta: dict) -> str:
+    code = str(meta.get("examCode") or "").upper()
+    if code == "CLF-C02":
+        return "clf-c02"
+    if code == "MLA-C01":
+        return "mla-c01"
+    return re.sub(r"[^a-z0-9-]", "", code.lower()) or "exam"
+
+
+def default_data_dir(exam_id: str = "clf-c02") -> Path:
+    base = Path(os.environ.get("LOCALAPPDATA") or Path.home())
+    if exam_id == "clf-c02":
+        return base / "clf02-practice"
+    safe = re.sub(r"[^a-z0-9-]", "", exam_id.lower()) or "exam"
+    return base / "aws-exam-practice" / safe
+
+
+def load_catalog(root: Path) -> list[dict]:
+    payload = json.loads((root / "assets" / "data" / "catalog.json").read_text(encoding="utf-8"))
+    exams = []
+    for exam in payload.get("exams") or []:
+        label = f"{exam.get('id', '')} {exam.get('code', '')} {exam.get('file', '')}"
+        if re.search(r"specialty", label, re.IGNORECASE):
+            continue
+        if exam.get("id") and exam.get("file"):
+            exams.append(exam)
+    return exams
 
 
 def load_pool(path: Path) -> dict:
@@ -172,13 +199,14 @@ def paint(text: str, code: str, color: bool) -> str:
 
 
 class ExamApp:
-    def __init__(self, pool: dict, data_dir: Path, seed: int | None, color: bool):
+    def __init__(self, pool: dict, data_dir: Path, seed: int | None, color: bool, can_switch: bool = False):
         self.pool = pool
         self.meta = pool["meta"]
         self.by_id = {question["id"]: question for question in pool["questions"]}
         self.data_dir = data_dir
         self.seed = seed
         self.color = color
+        self.can_switch = can_switch
         self.width = min(88, max(60, shutil_width()))
         self.wrong = self._load_json("wrong-pool.json", [])
         self.session = self._load_json("session.json", None)
@@ -202,11 +230,17 @@ class ExamApp:
                 self._play()
             elif choice in {"3", "w", "wrong"}:
                 self._wrong_menu()
+            elif choice in {"m", "modules"} and self.can_switch:
+                return 2
             elif choice in {"q", "quit", "exit"}:
                 return 0
             else:
-                hint = "Enter 1, 2, 3, or q." if self.session and not self.session.get("finished") else "Enter 1, 3, or q."
-                self._say(hint)
+                options = "1, 2, 3, m, or q" if self.can_switch and self.session and not self.session.get("finished") else ""
+                if not options:
+                    options = "1, 3, m, or q" if self.can_switch else ""
+                if not options:
+                    options = "1, 2, 3, or q" if self.session and not self.session.get("finished") else "1, 3, or q"
+                self._say(f"Enter {options}.")
                 self._pause()
 
     def _start(self, mode: str) -> None:
@@ -385,20 +419,22 @@ class ExamApp:
 
     def _print_home(self) -> None:
         meta = self.meta
-        print(paint("CLF-C02 exam", "1", self.color))
+        code = meta.get("examCode", "Exam")
+        name = meta.get("examName", code)
+        print(paint(f"{code}  {name}", "1", self.color))
         print()
         mix = ", ".join(f"{domain['examCount']} {domain['name']}" for domain in meta["domains"])
         weights = " / ".join(str(round(domain["weight"] * 100)) + "%" for domain in meta["domains"])
         print(self._wrap(
-            f"{meta['unique']} questions from {meta['sourceFiles']} practice sets. "
+            f"{meta['unique']} questions from {meta['sourceFiles']} source files. "
             f"Each exam draws {meta['examSize']}: {mix}. "
-            f"That follows the CLF-C02 weights as closely as {meta['examSize']} questions allow ({weights})."
+            f"That follows the {code} weights as closely as {meta['examSize']} questions allow ({weights})."
         ))
         print()
         print(f"Pass mark {meta['officialPass']} ({round(meta['passMark'] * 100)}%). Time {meta['minutes']} minutes.")
         print()
         for domain in meta["domains"]:
-            print(f"  {domain['name']:<24} {domain['poolCount']:>4} in the pool   {domain['examCount']:>2} on the exam")
+            print(f"  {domain['name']:<28} {domain['poolCount']:>4} in the pool   {domain['examCount']:>2} on the exam")
         print()
         print(f"Wrong pool: {len(self.wrong)}")
         print(f"Saved in {self.data_dir}")
@@ -408,6 +444,8 @@ class ExamApp:
             done = sum(1 for item in self.session["responses"].values() if item.get("checked"))
             print(f"2  Continue the saved exam ({done} of {len(self.session['ids'])} checked)")
         print("3  Wrong pool")
+        if self.can_switch:
+            print("m  Choose a different exam")
         print("q  Quit")
 
     def _print_question(self, question: dict, response: dict) -> None:
@@ -462,10 +500,11 @@ class ExamApp:
         print(paint(f"{score['correct']} / {score['total']}", "1", self.color))
         verdict = ""
         if self.session["mode"] == "exam":
+            mark = round(self.meta["passMark"] * 100)
             if passed(score["correct"], score["total"], self.meta["passMark"]):
-                verdict = " That meets the 70% pass mark."
+                verdict = f" That meets the {mark}% pass mark."
             else:
-                verdict = " That is under the 70% pass mark."
+                verdict = f" That is under the {mark}% pass mark."
         print(f"{percent}%." + verdict)
         if score["unanswered"]:
             print(
@@ -593,28 +632,74 @@ def configure_stdio() -> None:
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="CLF-C02 terminal exam, one question at a time.")
-    parser.add_argument("--pool", type=Path, help="Question pool JSON. Defaults to the built-in pool.")
+    parser = argparse.ArgumentParser(description="AWS practice exam, one question at a time.")
+    parser.add_argument("--pool", type=Path, help="Question pool JSON. Skips the exam menu. Used for tests.")
     parser.add_argument("--data-dir", type=Path, help="Folder for the wrong pool and the saved exam.")
     parser.add_argument("--seed", type=int, help="Repeat the same draw. Used for tests.")
     return parser.parse_args(argv)
 
 
-def main(argv: list[str] | None = None) -> int:
-    configure_stdio()
-    args = parse_args(sys.argv[1:] if argv is None else argv)
-    pool_path = args.pool or (resource_root() / "assets" / "data" / "questions.json")
+def choose_module(exams: list[dict], color: bool) -> dict | None:
+    while True:
+        print(paint("Choose an exam", "1", color))
+        print()
+        print("Each exam has its own questions, timer, pass mark, and wrong pool.")
+        print("Machine Learning Specialty is not included.")
+        print()
+        for index, exam in enumerate(exams, start=1):
+            print(f"{index}  {exam['code']}  {exam['title']}")
+            if exam.get("blurb"):
+                print(f"   {exam['blurb']}")
+        print("q  Quit")
+        choice = input("Choose: ").strip().lower()
+        if choice in {"q", "quit", "exit"}:
+            return None
+        if choice.isdigit() and 1 <= int(choice) <= len(exams):
+            return exams[int(choice) - 1]
+        print("Enter a number from the list, or q.")
+        print()
+
+
+def open_exam(pool_path: Path, data_dir: Path | None, seed: int | None, color: bool, can_switch: bool) -> int:
+    if "specialty" in pool_path.as_posix().lower():
+        print("Specialty exams are not included.", file=sys.stderr)
+        return 1
     if not pool_path.is_file():
         print(f"Question pool not found: {pool_path}", file=sys.stderr)
         return 1
+    pool = load_pool(pool_path)
+    if re.search(r"specialty", str(pool.get("meta", {}).get("examCode", "")), re.IGNORECASE):
+        print("Specialty exams are not included.", file=sys.stderr)
+        return 1
     app = ExamApp(
-        load_pool(pool_path),
-        args.data_dir or default_data_dir(),
-        args.seed,
-        enable_color(),
+        pool,
+        data_dir or default_data_dir(exam_storage_id(pool["meta"])),
+        seed,
+        color,
+        can_switch,
     )
+    return app.run()
+
+
+def main(argv: list[str] | None = None) -> int:
+    configure_stdio()
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    color = enable_color()
     try:
-        return app.run()
+        if args.pool:
+            return open_exam(args.pool, args.data_dir, args.seed, color, False)
+        exams = load_catalog(resource_root())
+        if not exams:
+            print("No exams are available.", file=sys.stderr)
+            return 1
+        while True:
+            selected = choose_module(exams, color)
+            if selected is None:
+                return 0
+            pool_path = resource_root() / "assets" / "data" / selected["file"]
+            status = open_exam(pool_path, None, args.seed, color, True)
+            if status != 2:
+                return status
     except (EOFError, KeyboardInterrupt):
         print()
         return 0

@@ -65,7 +65,7 @@ Each Section contains a number of units. **Below Table Link** containing informa
 - ## Practice Exams ( dumps )
 
 - **[Practice Exam List](https://kananinirav.com/practice-exam/exams.html)**
-- **[32-question exam dashboard](/dashboard/)** — random exam weighted to the CLF-C02 domain mix
+- **[Exam practice](/dashboard/)** — choose CLF-C02 or MLA-C01. Each exam uses its own pool, timer, and wrong pool. Machine Learning Specialty is not included.
 
 ## Other AWS And Azure Certification Notes
 

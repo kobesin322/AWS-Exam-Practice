@@ -21,7 +21,7 @@ If this guide has been helpful to you please share it with others and react to t
 
 ### Random exam
 
-- [32-question exam dashboard](/dashboard/) draws from every practice set using the CLF-C02 mix: Cloud Concepts 24%, Security & Compliance 30%, Technology & Services 34%, Billing & Support 12%.
+- [Exam practice](/dashboard/) lets you choose a module. CLF-C02 draws 32 questions (Cloud Concepts 24%, Security & Compliance 30%, Technology & Services 34%, Billing & Support 12%). MLA-C01 draws 65 questions (Data Preparation 28%, Model Development 26%, Deployment & Orchestration 22%, Monitoring & Security 24%). The two pools are never mixed. Machine Learning Specialty is not included.
 
 ### Exam List
 

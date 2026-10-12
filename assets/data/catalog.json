@@ -1,0 +1,20 @@
+{
+  "exams": [
+    {
+      "id": "clf-c02",
+      "code": "CLF-C02",
+      "title": "Cloud Practitioner",
+      "level": "Foundational",
+      "file": "questions.json",
+      "blurb": "32 questions from the CLF-C02 domain mix. 44 minutes. Pass mark 700/1000."
+    },
+    {
+      "id": "mla-c01",
+      "code": "MLA-C01",
+      "title": "Machine Learning Engineer — Associate",
+      "level": "Associate",
+      "file": "mla-c01.json",
+      "blurb": "65 questions from the MLA-C01 domain mix. 130 minutes. Pass mark 720/1000."
+    }
+  ]
+}

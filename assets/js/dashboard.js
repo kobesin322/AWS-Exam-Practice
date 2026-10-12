@@ -1,10 +1,12 @@
 /* Exam dashboard UI. Scoring rules live in exam-engine.js. */
 (function () {
   var engine = window.ExamEngine;
-  var WRONG_KEY = "clf02-wrong-pool-v1";
-  var SESSION_KEY = "clf02-active-exam-v1";
+  var LEGACY_WRONG_KEY = "clf02-wrong-pool-v1";
+  var LEGACY_SESSION_KEY = "clf02-active-exam-v1";
 
   var ui = {
+    catalog: [],
+    examId: "",
     data: null,
     byId: new Map(),
     wrong: [],
@@ -22,17 +24,55 @@
     app.addEventListener("click", onClick);
     app.addEventListener("change", onChoiceChange);
     document.addEventListener("keydown", onKeydown);
-    loadPool();
+    loadCatalog();
   }
 
-  function loadPool() {
+  function loadCatalog() {
+    ui.screen = "loading";
     render();
-    fetch("/assets/data/questions.json")
+    fetch("/assets/data/catalog.json")
+      .then(function (response) {
+        if (!response.ok) throw new Error("status " + response.status);
+        return response.json();
+      })
+      .then(function (catalog) {
+        ui.catalog = (catalog.exams || []).filter(function (exam) {
+          var label = (exam.id || "") + " " + (exam.code || "") + " " + (exam.file || "");
+          return exam && exam.id && exam.file && !/specialty/i.test(label);
+        });
+        if (!ui.catalog.length) throw new Error("empty catalog");
+        ui.screen = "modules";
+        setHeading();
+        render();
+      })
+      .catch(function () {
+        ui.screen = "error";
+        ui.error = "The exam list did not load. Refresh the page and try again.";
+        render();
+      });
+  }
+
+  function pickExam(examId) {
+    var exam = ui.catalog.find(function (item) { return item.id === examId; });
+    if (!exam) return;
+    ui.examId = exam.id;
+    ui.data = null;
+    ui.byId = new Map();
+    ui.wrong = [];
+    ui.session = null;
+    ui.error = "";
+    ui.screen = "loading";
+    setHeading();
+    render();
+    fetch("/assets/data/" + exam.file)
       .then(function (response) {
         if (!response.ok) throw new Error("status " + response.status);
         return response.json();
       })
       .then(function (data) {
+        if (!data.meta || data.meta.examCode !== exam.code) {
+          throw new Error("This file is not the " + exam.code + " pool.");
+        }
         ui.data = data;
         ui.byId = new Map(data.questions.map(function (question) {
           return [question.id, question];
@@ -43,20 +83,37 @@
         saveWrong();
         ui.session = loadSession();
         ui.screen = "home";
+        setHeading();
         render();
       })
       .catch(function () {
         ui.screen = "error";
-        ui.error = "The question pool did not load. Refresh the page and try again.";
+        ui.error = "The " + exam.code + " question pool did not load. Refresh the page and try again.";
+        setHeading();
         render();
       });
+  }
+
+  function showModules() {
+    stopTimer();
+    ui.data = null;
+    ui.byId = new Map();
+    ui.wrong = [];
+    ui.session = null;
+    ui.error = "";
+    ui.examId = "";
+    ui.screen = "modules";
+    setHeading();
+    render();
   }
 
   function onClick(event) {
     var target = event.target.closest("[data-action]");
     if (!target || target.disabled) return;
     var action = target.getAttribute("data-action");
-    if (action === "start") startExam("exam");
+    if (action === "pick-exam") pickExam(target.getAttribute("data-id"));
+    else if (action === "modules") showModules();
+    else if (action === "start") startExam("exam");
     else if (action === "continue") openSession();
     else if (action === "discard") discardSession();
     else if (action === "check") checkCurrent();
@@ -179,7 +236,8 @@
 
   function discardSession() {
     ui.session = null;
-    sessionStorage.removeItem(SESSION_KEY);
+    sessionStorage.removeItem(sessionStorageKey());
+    if (ui.examId === "clf-c02") sessionStorage.removeItem(LEGACY_SESSION_KEY);
     stopTimer();
     ui.screen = "home";
     render();
@@ -279,19 +337,58 @@
     stopTimer();
     var app = document.getElementById("app");
     if (ui.screen === "loading") {
-      app.innerHTML = '<p class="panel" role="status">Loading question pools…</p>';
+      app.innerHTML = '<p class="panel" role="status">Loading exams…</p>';
       return;
     }
     if (ui.screen === "error") {
-      app.innerHTML = '<p class="panel banner wrong" role="alert">' + escapeHtml(ui.error) + "</p>";
+      app.innerHTML = '<p class="panel banner wrong" role="alert">' + escapeHtml(ui.error) + "</p>" +
+        '<div class="actions"><button class="btn btn-secondary" type="button" data-action="modules">All exams</button></div>';
       return;
     }
-    if (ui.screen === "home") app.innerHTML = homeHtml();
+    if (ui.screen === "modules") app.innerHTML = modulesHtml();
+    else if (ui.screen === "home") app.innerHTML = homeHtml();
     else if (ui.screen === "exam") {
       app.innerHTML = examHtml();
       startTimer();
     } else if (ui.screen === "results") app.innerHTML = resultsHtml();
     else if (ui.screen === "wrong") app.innerHTML = wrongHtml();
+  }
+
+  function passPercent() {
+    return Math.round(ui.data.meta.passMark * 100);
+  }
+
+  function setHeading() {
+    var eyebrow = document.getElementById("exam-eyebrow");
+    var title = document.getElementById("exam-title");
+    if (!eyebrow || !title) return;
+    if (!ui.data) {
+      eyebrow.textContent = "AWS practice exams";
+      title.textContent = "Choose an exam";
+      return;
+    }
+    eyebrow.textContent = ui.data.meta.level || "AWS certification";
+    title.textContent = (ui.data.meta.examCode || "Exam") + " practice";
+  }
+
+  function modulesHtml() {
+    var cards = ui.catalog.map(function (exam) {
+      return (
+        '<li><button class="module" type="button" data-action="pick-exam" data-id="' + escapeHtml(exam.id) + '">' +
+          '<span class="meta-line">' + escapeHtml(exam.level || "") + "</span>" +
+          "<h2>" + escapeHtml(exam.code) + "</h2>" +
+          "<p>" + escapeHtml(exam.title) + "</p>" +
+          '<p class="lede">' + escapeHtml(exam.blurb || "") + "</p>" +
+        "</button></li>"
+      );
+    }).join("");
+    return (
+      '<section class="panel"><h2>Exam modules</h2>' +
+      "<p class=\"lede\">Each exam uses its own question pool, timer, pass mark, and wrong pool. " +
+      "Questions from one exam are never mixed into another. " +
+      "Machine Learning Specialty is not included.</p>" +
+      '<ul class="modules">' + cards + "</ul></section>"
+    );
   }
 
   function homeHtml() {
@@ -305,7 +402,7 @@
         '<li class="pool ' + domain.id + '">' +
           "<h3>" + escapeHtml(domain.name) + "</h3>" +
           "<p><strong>" + domain.poolCount + "</strong> in the pool</p>" +
-          "<p><strong>" + domain.examCount + "</strong> on each exam · " + official + "% of CLF-C02</p>" +
+          "<p><strong>" + domain.examCount + "</strong> on each exam · " + official + "% of " + escapeHtml(meta.examCode) + "</p>" +
         "</li>"
       );
     }).join("");
@@ -328,8 +425,8 @@
     return (
       error + sessionNote +
       '<section class="panel"><h2>Question pools</h2>' +
-      '<p class="lede">All ' + meta.unique + ' unique questions from ' + meta.sourceFiles +
-      ' practice sets are split into the four CLF-C02 domains. A new exam draws ' + meta.examSize +
+      '<p class="lede">All ' + meta.unique + " unique " + escapeHtml(meta.examCode) + " questions from " + meta.sourceFiles +
+      " source files are split into the " + meta.examCode + " domains. A new exam draws " + meta.examSize +
       ' at random: ' + escapeHtml(mix) + '. That is the closest whole-question mix to ' +
       meta.domains.map(function (domain) { return Math.round(domain.weight * 100) + "%"; }).join(" / ") +
       '.</p><ul class="pools">' + cards + "</ul>" +
@@ -337,9 +434,10 @@
       meta.examSize + '-question exam</button>' +
       '<button class="btn btn-secondary" type="button" data-action="wrong">Wrong pool (' + ui.wrong.length +
       ")</button></div>" +
-      '<p class="lede">The official exam is ' + meta.officialQuestions + ' questions in ' + meta.officialMinutes +
-      ' minutes, with a pass mark of ' + meta.officialPass + '. This sitting uses ' + meta.minutes +
-      ' minutes and the same 70% mark. Pick one or more choices, then click Check answer. A wrong answer is saved in the wrong pool on this browser.</p></section>'
+      '<p class="lede">The official exam is ' + meta.officialQuestions + " questions in " + meta.officialMinutes +
+      " minutes, with a pass mark of " + meta.officialPass + ". This sitting uses " + meta.minutes +
+      " minutes and the same " + passPercent() + "% mark. Pick one or more choices, then click Check answer. A wrong answer is saved in this exam's wrong pool on this browser.</p>" +
+      '<div class="actions"><button class="btn btn-secondary" type="button" data-action="modules">All exams</button></div></section>'
     );
   }
 
@@ -445,8 +543,8 @@
     var verdict = "";
     if (ui.session.mode === "exam") {
       verdict = didPass
-        ? " That meets the 70% pass mark."
-        : " That is under the 70% pass mark.";
+        ? " That meets the " + passPercent() + "% pass mark."
+        : " That is under the " + passPercent() + "% pass mark.";
     }
     var rows = ui.data.meta.domains.map(function (domain) {
       var stat = score.byDomain[domain.id];
@@ -464,9 +562,10 @@
       "<h2>By domain</h2><ul class=\"breakdown\">" + rows + "</ul>" +
       '<div class="actions">' +
       '<button class="btn btn-secondary" type="button" data-action="review">Review answers</button>' +
-      '<button class="btn btn-primary" type="button" data-action="start">New 32-question exam</button>' +
+      '<button class="btn btn-primary" type="button" data-action="start">New ' + ui.data.meta.examSize + '-question exam</button>' +
       '<button class="btn btn-secondary" type="button" data-action="wrong">Wrong pool (' + ui.wrong.length + ")</button>" +
-      '<button class="btn btn-secondary" type="button" data-action="home">Back</button></div></section>'
+      '<button class="btn btn-secondary" type="button" data-action="home">Back</button>' +
+      '<button class="btn btn-secondary" type="button" data-action="modules">All exams</button></div></section>'
     );
   }
 
@@ -547,9 +646,23 @@
     }
   }
 
+  function wrongStorageKey() {
+    return "exam-wrong-pool-v1:" + (ui.examId || "clf-c02");
+  }
+
+  function sessionStorageKey() {
+    return "exam-session-v1:" + (ui.examId || "clf-c02");
+  }
+
+  function readStored(store, key, legacyKey) {
+    var raw = store.getItem(key);
+    if (!raw && ui.examId === "clf-c02" && legacyKey) raw = store.getItem(legacyKey);
+    return raw;
+  }
+
   function loadWrong() {
     try {
-      var parsed = JSON.parse(localStorage.getItem(WRONG_KEY) || "[]");
+      var parsed = JSON.parse(readStored(localStorage, wrongStorageKey(), LEGACY_WRONG_KEY) || "[]");
       if (!Array.isArray(parsed)) return [];
       return parsed.filter(function (item) {
         return item && typeof item.id === "string" && Array.isArray(item.selected);
@@ -560,12 +673,12 @@
   }
 
   function saveWrong() {
-    localStorage.setItem(WRONG_KEY, JSON.stringify(ui.wrong));
+    localStorage.setItem(wrongStorageKey(), JSON.stringify(ui.wrong));
   }
 
   function loadSession() {
     try {
-      var parsed = JSON.parse(sessionStorage.getItem(SESSION_KEY) || "null");
+      var parsed = JSON.parse(readStored(sessionStorage, sessionStorageKey(), LEGACY_SESSION_KEY) || "null");
       if (!parsed || !Array.isArray(parsed.ids) || !parsed.ids.length) return null;
       if (!parsed.ids.every(function (id) { return ui.byId.has(id); })) return null;
       return parsed;
@@ -576,10 +689,10 @@
 
   function saveSession() {
     if (!ui.session) {
-      sessionStorage.removeItem(SESSION_KEY);
+      sessionStorage.removeItem(sessionStorageKey());
       return;
     }
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify(ui.session));
+    sessionStorage.setItem(sessionStorageKey(), JSON.stringify(ui.session));
   }
 
   function escapeHtml(value) {
