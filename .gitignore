@@ -10,3 +10,6 @@ Gemfile.lock
 *.spec
 __pycache__/
 *.pyc
+
+# Machine Learning Specialty source is a different exam and is not part of this app.
+/exam-datasets/Specialty/

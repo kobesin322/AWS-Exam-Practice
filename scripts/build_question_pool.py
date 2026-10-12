@@ -636,6 +636,8 @@ def build() -> dict:
     payload = {
         "meta": {
             "examCode": "CLF-C02",
+            "examName": "Cloud Practitioner",
+            "level": "Foundational",
             "examSize": EXAM_SIZE,
             "passMark": PASS_MARK,
             "officialQuestions": OFFICIAL_QUESTIONS,

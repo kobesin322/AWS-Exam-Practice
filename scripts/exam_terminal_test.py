@@ -67,7 +67,16 @@ def test_scripted_session() -> None:
     script = "\n".join(["1", wrong, "end", "y", "", "3", "2", "b", "b", "q", ""]) + "\n"
     with tempfile.TemporaryDirectory() as folder:
         completed = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "exam_terminal.py"), "--seed", "7", "--data-dir", folder],
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "exam_terminal.py"),
+                "--pool",
+                str(ROOT / "assets" / "data" / "questions.json"),
+                "--seed",
+                "7",
+                "--data-dir",
+                folder,
+            ],
             input=script,
             text=True,
             encoding="utf-8",
@@ -87,7 +96,74 @@ def test_scripted_session() -> None:
         assert "Your answer:" in output
 
 
+MLA_COUNTS = {
+    "data-preparation": 18,
+    "model-development": 17,
+    "deployment": 14,
+    "monitoring-security": 16,
+}
+
+
+def test_modules_stay_separate() -> None:
+    catalog = exam.load_catalog(ROOT)
+    assert [item["id"] for item in catalog] == ["clf-c02", "mla-c01"]
+    assert "specialty" not in json.dumps(catalog).lower()
+    mla = json.loads((ROOT / "assets" / "data" / "mla-c01.json").read_text(encoding="utf-8"))
+    clf = json.loads((ROOT / "assets" / "data" / "questions.json").read_text(encoding="utf-8"))
+    assert mla["meta"]["examCode"] == "MLA-C01"
+    assert mla["meta"]["examSize"] == 65
+    assert mla["meta"]["minutes"] == 130
+    assert mla["meta"]["passMark"] == 0.72
+    assert clf["meta"]["examCode"] == "CLF-C02"
+    counts: dict[str, int] = {}
+    for question in mla["questions"]:
+        assert question["id"].startswith("mla_")
+        assert "Specialty" not in question["source"]
+        assert "MLA-C01" in question["source"]
+        counts[question["domain"]] = counts.get(question["domain"], 0) + 1
+    assert {domain["id"]: domain["examCount"] for domain in mla["meta"]["domains"]} == MLA_COUNTS
+    for domain in mla["meta"]["domains"]:
+        assert counts[domain["id"]] >= domain["examCount"]
+    drawn = exam.build_exam(mla["questions"], mla["meta"], rng(7))
+    drawn_counts: dict[str, int] = {}
+    for question in drawn:
+        drawn_counts[question["domain"]] = drawn_counts.get(question["domain"], 0) + 1
+    assert len(drawn) == 65
+    assert drawn_counts == MLA_COUNTS
+    assert {item["id"] for item in clf["questions"]}.isdisjoint({item["id"] for item in mla["questions"]})
+    assert exam.default_data_dir("clf-c02") != exam.default_data_dir("mla-c01")
+    assert exam.default_data_dir("mla-c01").name == "mla-c01"
+
+
+def test_module_menu() -> None:
+    script = "\n".join(["2", "m", "q"]) + "\n"
+    with tempfile.TemporaryDirectory() as folder:
+        env = dict(**{key: value for key, value in __import__("os").environ.items()})
+        env["LOCALAPPDATA"] = folder
+        completed = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "exam_terminal.py")],
+            input=script,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
+            cwd=ROOT,
+            env=env,
+        )
+        output = completed.stdout + completed.stderr
+        assert completed.returncode == 0, output
+        assert "Choose an exam" in output
+        assert "MLA-C01" in output
+        assert "Machine Learning Specialty is not included." in output
+        assert "Specialty" not in output.replace("Machine Learning Specialty is not included.", "")
+        mla_pool = Path(folder) / "aws-exam-practice" / "mla-c01" / "wrong-pool.json"
+        assert mla_pool.is_file()
+        assert not (Path(folder) / "clf02-practice").exists()
+
+
 if __name__ == "__main__":
     test_engine()
     test_scripted_session()
+    test_modules_stay_separate()
+    test_module_menu()
     print("exam terminal tests passed")
